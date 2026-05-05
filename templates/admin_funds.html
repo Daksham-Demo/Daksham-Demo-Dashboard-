@@ -254,7 +254,7 @@
         <select id="adminCatFilter" onchange="filterAdminFunds()">
           <option value="">All Categories</option>
           {% for cat in categories %}
-          <option value="{{ cat.name }}">{{ cat.name }}</option>
+          <option value="{{ cat.code }}">{{ cat.name }}</option>
           {% endfor %}
         </select>
       </div>
