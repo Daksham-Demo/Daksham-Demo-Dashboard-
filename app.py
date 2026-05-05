@@ -564,7 +564,7 @@ def api_update_fund_details():
     if not check_admin_pwd(pwd): return jsonify({'success': False, 'error': 'Incorrect password'}), 403
     file = request.files.get('file')
     category_code = request.form.get('category', '')
-    quarter = request.form.get('quarter', '')
+    quarter = request.form.get('quarter', '').strip()
     if not file or file.filename == '': return jsonify({'success': False, 'error': 'No file'}), 400
     # ── Read file: support both CSV and Excel ──────────────────────────────────
     try:
@@ -576,120 +576,144 @@ def api_update_fund_details():
             df = pd.read_excel(buf, engine='openpyxl')
     except Exception as read_err:
         return jsonify({'success': False, 'error': f'Could not read file: {str(read_err)}'}), 400
+    # Strip whitespace from all column names
+    df.columns = [str(c).strip() for c in df.columns]
     try:
         db = get_db()
         cat = db.execute("SELECT id FROM categories WHERE code=?", (category_code,)).fetchone()
         cid = cat['id'] if cat else None
         def safe(v):
-            if pd.isna(v) or v == '-' or v == '': return None
-            try: return round(float(v), 4)
+            try:
+                if pd.isna(v): return None
+            except (TypeError, ValueError): pass
+            if str(v).strip() in ('', '-', 'nan', 'None'): return None
+            try: return round(float(str(v).replace(',', '')), 4)
             except: return None
         def safestr(v):
-            if pd.isna(v) or str(v).strip() in ['', 'nan', 'None', '-']: return None
-            return str(v).strip()
-        # Exact-match-first column finder — prevents 'Sector 1' matching 'Sector 1 %'
+            if v is None: return None
+            try:
+                if pd.isna(v): return None
+            except (TypeError, ValueError): pass
+            s = str(v).strip()
+            return None if s in ('', 'nan', 'None', '-') else s
+        # Exact-match-first column finder
         def col(name, exact=False):
             name_l = name.lower().strip()
             for c in df.columns:
-                if str(c).lower().strip() == name_l:
-                    return c
-            if exact:
-                return None
+                if str(c).lower().strip() == name_l: return c
+            if exact: return None
             for c in df.columns:
-                if name_l in str(c).lower():
-                    return c
+                if name_l in str(c).lower(): return c
             return None
-        nc = col('fund name') or col('name') or df.columns[0]
-        # Common fields
-        bc  = col('beta')
-        ec  = col('expense ratio', exact=True) or col('exp ratio', exact=True) or col('expense') or col('exp')
-        sc  = col('std dev', exact=True) or col('std_dev', exact=True) or col('std dev') or col('std.')
-        ic  = col('info ratio', exact=True) or col('info_ratio', exact=True) or col('info ratio') or col('information')
-        m1  = col('manager 1', exact=True) or col('manager1', exact=True) or col('manager 1')
-        m2  = col('manager 2', exact=True) or col('manager2', exact=True) or col('manager 2')
-        ac  = col('aum', exact=True) or col('aum')
-        lcc = col('lc %', exact=True) or col('lc%', exact=True) or col('lc %') or col('large cap')
-        mcc = col('mc %', exact=True) or col('mc%', exact=True) or col('mc %') or col('mid cap')
-        scc = col('sc %', exact=True) or col('sc%', exact=True) or col('sc %') or col('small cap')
+        nc    = col('fund name') or col('name') or df.columns[0]
+        bc    = col('beta')
+        ec    = col('expense ratio', exact=True) or col('exp ratio', exact=True) or col('expense') or col('exp')
+        sc    = col('std dev', exact=True) or col('std_dev', exact=True) or col('std dev') or col('std.')
+        ic    = col('info ratio', exact=True) or col('info_ratio', exact=True) or col('info ratio') or col('information')
+        m1    = col('manager 1', exact=True) or col('manager1', exact=True) or col('manager 1')
+        m2    = col('manager 2', exact=True) or col('manager2', exact=True) or col('manager 2')
+        ac    = col('aum', exact=True) or col('aum')
+        lcc   = col('lc %', exact=True) or col('lc%', exact=True) or col('lc %') or col('large cap')
+        mcc   = col('mc %', exact=True) or col('mc%', exact=True) or col('mc %') or col('mid cap')
+        scc   = col('sc %', exact=True) or col('sc%', exact=True) or col('sc %') or col('small cap')
         cashc = col('cash %', exact=True) or col('cash%', exact=True) or col('cash')
-        # Equity-specific — exact=True prevents 'Sector 1' matching 'Sector 1 %'
-        s1n = col('sector 1', exact=True) or col('sector1', exact=True)
-        s1p = col('sector 1 %', exact=True) or col('sector1 %', exact=True) or col('sector1%', exact=True)
-        s2n = col('sector 2', exact=True) or col('sector2', exact=True)
-        s2p = col('sector 2 %', exact=True) or col('sector2 %', exact=True) or col('sector2%', exact=True)
-        s3n = col('sector 3', exact=True) or col('sector3', exact=True)
-        s3p = col('sector 3 %', exact=True) or col('sector3 %', exact=True) or col('sector3%', exact=True)
-        # Hybrid-specific
-        eqc  = col('equity %', exact=True) or col('equity%', exact=True) or col('equity %') or col('equity')
-        neqc = col('net equity %', exact=True) or col('net equity', exact=True) or col('net_equity', exact=True) or col('net equity')
-        dbc  = col('debt %', exact=True) or col('debt%', exact=True) or col('debt %') or col('debt')
-        otc  = col('others %', exact=True) or col('others%', exact=True) or col('others %') or col('others')
-        gldc = col('gold %', exact=True) or col('gold%', exact=True) or col('gold %') or col('gold')
-        slvc = col('silver %', exact=True) or col('silver%', exact=True) or col('silver %') or col('silver')
-        rtc = col('reits %') or col('reits') or col('reit')
-        incc = col('inception')
-        afs = db.execute("SELECT id,name FROM funds WHERE category_id=? AND is_active=1", (cid,)).fetchall() if cid else db.execute("SELECT id,name FROM funds WHERE is_active=1").fetchall()
+        s1n   = col('sector 1', exact=True) or col('sector1', exact=True)
+        s1p   = col('sector 1 %', exact=True) or col('sector1 %', exact=True) or col('sector1%', exact=True)
+        s2n   = col('sector 2', exact=True) or col('sector2', exact=True)
+        s2p   = col('sector 2 %', exact=True) or col('sector2 %', exact=True) or col('sector2%', exact=True)
+        s3n   = col('sector 3', exact=True) or col('sector3', exact=True)
+        s3p   = col('sector 3 %', exact=True) or col('sector3 %', exact=True) or col('sector3%', exact=True)
+        eqc   = col('equity %', exact=True) or col('equity%', exact=True) or col('equity %') or col('equity')
+        neqc  = col('net equity %', exact=True) or col('net equity', exact=True) or col('net_equity', exact=True) or col('net equity')
+        dbc   = col('debt %', exact=True) or col('debt%', exact=True) or col('debt %') or col('debt')
+        otc   = col('others %', exact=True) or col('others%', exact=True) or col('others %') or col('others')
+        gldc  = col('gold %', exact=True) or col('gold%', exact=True) or col('gold %') or col('gold')
+        slvc  = col('silver %', exact=True) or col('silver%', exact=True) or col('silver %') or col('silver')
+        rtc   = col('reits %') or col('reits') or col('reit')
+        incc  = col('inception')
+        afs = db.execute(
+            "SELECT id,name FROM funds WHERE category_id=? AND is_active=1", (cid,)
+        ).fetchall() if cid else db.execute(
+            "SELECT id,name FROM funds WHERE is_active=1"
+        ).fetchall()
+
+        now_ts = datetime.now().isoformat()
         updated, unmatched = 0, []
+        # Collect all rows first, then batch-write in a single transaction
+        detail_upserts = []   # (fund_id, field_dict)
+        history_rows   = []   # param dicts for INSERT OR REPLACE
+        inception_upd  = []   # (date_str, fund_id)
+
         for _, row in df.iterrows():
             rn = safestr(row[nc])
             if not rn: continue
             fid = fuzzy_match(rn, afs)
             if not fid: unmatched.append(rn); continue
             u = {}
-            if bc: u['beta'] = safe(row[bc])
-            if ec: u['expense_ratio'] = safe(row[ec])
-            if sc: u['std_dev'] = safe(row[sc])
-            if ic: u['info_ratio'] = safe(row[ic])
-            if m1: u['manager1'] = safestr(row[m1])
-            if m2: u['manager2'] = safestr(row[m2])
-            if ac: u['aum_latest'] = safe(row[ac])
-            if lcc: u['lc_pct'] = safe(row[lcc])
-            if mcc: u['mc_pct'] = safe(row[mcc])
-            if scc: u['sc_pct'] = safe(row[scc])
-            if cashc: u['cash_pct'] = safe(row[cashc])
-            if s1n: u['sector1_name'] = safestr(row[s1n])
-            if s1p: u['sector1_pct'] = safe(row[s1p])
-            if s2n: u['sector2_name'] = safestr(row[s2n])
-            if s2p: u['sector2_pct'] = safe(row[s2p])
-            if s3n: u['sector3_name'] = safestr(row[s3n])
-            if s3p: u['sector3_pct'] = safe(row[s3p])
-            if eqc: u['equity_pct'] = safe(row[eqc])
-            if neqc: u['net_equity_pct'] = safe(row[neqc])
-            if dbc: u['debt_pct'] = safe(row[dbc])
-            if otc: u['others_pct'] = safe(row[otc])
-            if gldc: u['gold_pct'] = safe(row[gldc])
-            if slvc: u['silver_pct'] = safe(row[slvc])
-            if rtc: u['reits_pct'] = safe(row[rtc])
-            u['updated_at'] = datetime.now().isoformat()
+            if bc:    u['beta']          = safe(row[bc])
+            if ec:    u['expense_ratio'] = safe(row[ec])
+            if sc:    u['std_dev']       = safe(row[sc])
+            if ic:    u['info_ratio']    = safe(row[ic])
+            if m1:    u['manager1']      = safestr(row[m1])
+            if m2:    u['manager2']      = safestr(row[m2])
+            if ac:    u['aum_latest']    = safe(row[ac])
+            if lcc:   u['lc_pct']        = safe(row[lcc])
+            if mcc:   u['mc_pct']        = safe(row[mcc])
+            if scc:   u['sc_pct']        = safe(row[scc])
+            if cashc: u['cash_pct']      = safe(row[cashc])
+            if s1n:   u['sector1_name']  = safestr(row[s1n])
+            if s1p:   u['sector1_pct']   = safe(row[s1p])
+            if s2n:   u['sector2_name']  = safestr(row[s2n])
+            if s2p:   u['sector2_pct']   = safe(row[s2p])
+            if s3n:   u['sector3_name']  = safestr(row[s3n])
+            if s3p:   u['sector3_pct']   = safe(row[s3p])
+            if eqc:   u['equity_pct']    = safe(row[eqc])
+            if neqc:  u['net_equity_pct']= safe(row[neqc])
+            if dbc:   u['debt_pct']      = safe(row[dbc])
+            if otc:   u['others_pct']    = safe(row[otc])
+            if gldc:  u['gold_pct']      = safe(row[gldc])
+            if slvc:  u['silver_pct']    = safe(row[slvc])
+            if rtc:   u['reits_pct']     = safe(row[rtc])
+            u['updated_at'] = now_ts
             if incc:
                 iv = safestr(row[incc])
                 if iv:
-                    try: db.execute("UPDATE funds SET inception_date=? WHERE id=?",
-                                    (str(pd.to_datetime(iv, dayfirst=True).date()), fid))
+                    try: inception_upd.append((str(pd.to_datetime(iv, dayfirst=True).date()), fid))
                     except: pass
             if u:
-                db.execute("INSERT OR IGNORE INTO fund_details(fund_id) VALUES(?)", (fid,))
-                db.execute(f"UPDATE fund_details SET {', '.join(f'{k}=?' for k in u)} WHERE fund_id=?",
-                           list(u.values()) + [fid])
+                detail_upserts.append((fid, u))
                 if quarter:
                     h = {'fund_id': fid, 'quarter': quarter}
-                    for k in ['aum_latest', 'lc_pct', 'mc_pct', 'sc_pct',
-                              'sector1_name', 'sector1_pct', 'sector2_name', 'sector2_pct',
-                              'sector3_name', 'sector3_pct',
-                              'equity_pct', 'net_equity_pct', 'debt_pct', 'others_pct',
-                              'gold_pct', 'silver_pct', 'reits_pct']:
-                        hk = 'aum' if k == 'aum_latest' else k
-                        h[hk] = u.get(k)
-                    hcols = ','.join(h.keys())
-                    hparams = ','.join(f':{k}' for k in h.keys())
-                    db.execute(f"INSERT OR REPLACE INTO fund_details_history ({hcols}) VALUES ({hparams})", h)
+                    for k in ['aum_latest','lc_pct','mc_pct','sc_pct',
+                              'sector1_name','sector1_pct','sector2_name','sector2_pct',
+                              'sector3_name','sector3_pct',
+                              'equity_pct','net_equity_pct','debt_pct','others_pct',
+                              'gold_pct','silver_pct','reits_pct']:
+                        h['aum' if k == 'aum_latest' else k] = u.get(k)
+                    history_rows.append(h)
                 updated += 1
-        db.commit()
+
+        # ── Single transaction: all writes at once ─────────────────────────────
+        with db:
+            for fid, u in detail_upserts:
+                db.execute("INSERT OR IGNORE INTO fund_details(fund_id) VALUES(?)", (fid,))
+                db.execute(
+                    f"UPDATE fund_details SET {', '.join(f'{k}=?' for k in u)} WHERE fund_id=?",
+                    list(u.values()) + [fid]
+                )
+            for h in history_rows:
+                hcols   = ','.join(h.keys())
+                hparams = ','.join(f':{k}' for k in h.keys())
+                db.execute(f"INSERT OR REPLACE INTO fund_details_history ({hcols}) VALUES ({hparams})", h)
+            for inc_date, fid in inception_upd:
+                db.execute("UPDATE funds SET inception_date=? WHERE id=?", (inc_date, fid))
+
         msg = f'Updated details for {updated} funds'
         if unmatched: msg += f'. {len(unmatched)} unmatched: {", ".join(unmatched[:10])}'
         return jsonify({'success': True, 'updated': updated, 'unmatched': unmatched[:10], 'message': msg})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        import traceback
+        return jsonify({'success': False, 'error': str(e), 'detail': traceback.format_exc()}), 500
 
 # ── EXCEL DOWNLOAD ─────────────────────────────────────────────────────────────
 def build_excel(db, category_id, as_of):
