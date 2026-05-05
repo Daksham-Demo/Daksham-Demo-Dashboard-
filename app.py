@@ -1,4 +1,4 @@
-import os, io, json, sqlite3, re
+import os, io, json, sqlite3, re, threading
 from datetime import datetime, date, timedelta
 from functools import wraps
 import pandas as pd
@@ -19,6 +19,35 @@ ADMIN_PWD = os.environ.get('ADMIN_PASSWORD', 'Admin@123')
 DASH_USER = os.environ.get('DASH_USERNAME', 'DakshamEmployee')
 DASH_PWD  = os.environ.get('DASH_PASSWORD', 'Daksham@2026')
 
+# ── BACKGROUND JOB TRACKER ────────────────────────────────────────────────────
+# Stores status of async recalculation jobs so the UI can poll for completion
+_jobs = {}   # job_id -> {'status': 'running'|'done'|'error', 'message': str}
+_jobs_lock = threading.Lock()
+
+def _run_recalc_bg(job_id, category_id, as_of):
+    """Run recalculate_all in a background thread with its own DB connection."""
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA foreign_keys=ON")
+        recalculate_all(db, category_id, as_of)
+        db.close()
+        with _jobs_lock:
+            _jobs[job_id] = {'status': 'done', 'message': 'Recalculation complete.'}
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id] = {'status': 'error', 'message': str(e)}
+
+def start_recalc_bg(category_id, as_of):
+    """Fire-and-forget background recalculation. Returns a job_id."""
+    job_id = f"{category_id}_{as_of}_{int(datetime.now().timestamp())}"
+    with _jobs_lock:
+        _jobs[job_id] = {'status': 'running', 'message': 'Recalculating returns…'}
+    t = threading.Thread(target=_run_recalc_bg, args=(job_id, category_id, as_of), daemon=True)
+    t.start()
+    return job_id
+
 def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(DB_PATH)
@@ -31,6 +60,14 @@ def get_db():
 def close_db(e=None):
     db = g.pop('db', None)
     if db: db.close()
+
+@app.route('/api/job_status/<job_id>')
+def api_job_status(job_id):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        return jsonify({'status': 'unknown', 'message': 'Job not found'})
+    return jsonify(job)
 
 def init_db():
     db = sqlite3.connect(DB_PATH)
@@ -454,11 +491,11 @@ def api_upload_navs():
             dn2, _ = parse_prefix(nm)
             fund_nav_counts[dn2 or nm] = cnt
         latest = get_latest_as_of(db, cat['id'])
-        if latest: recalculate_all(db, cat['id'], latest)
+        job_id = start_recalc_bg(cat['id'], latest) if latest else None
         return jsonify({'success': True, 'created_funds': created, 'matched_funds': matched,
                         'skipped_cols': skipped, 'total_navs': len(nav_rows), 'dates_count': len(df),
-                        'fund_nav_counts': fund_nav_counts, 'latest_as_of': latest,
-                        'message': f"Processed {len(fund_columns)} columns. Created {len(created)}, matched {len(matched)}. {len(nav_rows)} NAVs across {len(df)} dates."})
+                        'fund_nav_counts': fund_nav_counts, 'latest_as_of': latest, 'recalc_job': job_id,
+                        'message': f"Processed {len(fund_columns)} columns. Created {len(created)}, matched {len(matched)}. {len(nav_rows)} NAVs stored. Returns calculating in background…"})
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -552,10 +589,10 @@ def api_upload_update():
             parse_errors.append(f"{file.filename}: {str(e)}")
     db.commit()
     latest = get_latest_as_of(db, cat['id'])
-    if latest: recalculate_all(db, cat['id'], latest)
+    job_id = start_recalc_bg(cat['id'], latest) if latest else None
     return jsonify({'success': True, 'files': file_results, 'total_navs': total_rows,
-                    'latest_as_of': latest, 'parse_errors': parse_errors,
-                    'message': f"Processed {len(file_results)} file(s). {total_rows} NAVs stored."})
+                    'latest_as_of': latest, 'parse_errors': parse_errors, 'recalc_job': job_id,
+                    'message': f"Processed {len(file_results)} file(s). {total_rows} NAVs stored. Returns calculating in background…"})
 
 # ── FUND DETAILS UPLOAD ───────────────────────────────────────────────────────
 @app.route('/api/update_fund_details', methods=['POST'])
@@ -861,8 +898,7 @@ def api_funds(category):
         ORDER BY f.type DESC, fd.aum_latest DESC NULLS LAST
     """, (as_of, cat['id'])).fetchall()
     if funds and all(f['ret_1y'] is None for f in funds):
-        recalculate_all(db, cat['id'], as_of)
-        return api_funds(category)
+        start_recalc_bg(cat['id'], as_of)
     return jsonify({'funds': [dict(f) for f in funds], 'as_of': as_of,
                     'latest_as_of': get_latest_as_of(db, cat['id']), 'bm_type': cat['bm_type']})
 
@@ -873,8 +909,7 @@ def api_funds_as_of(category):
     if not cat: return jsonify({'error': 'Not found'}), 404
     as_of = request.args.get('as_of')
     if not as_of: return jsonify({'error': 'as_of required'}), 400
-    # Always recalculate for date changes (rolling returns depend on as_of)
-    recalculate_all(db, cat['id'], as_of)
+    start_recalc_bg(cat['id'], as_of)
     return api_funds(category)
 
 @app.route('/api/custom_return', methods=['POST'])
