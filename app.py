@@ -605,16 +605,28 @@ def api_update_fund_details():
     if not file or file.filename == '': return jsonify({'success': False, 'error': 'No file'}), 400
     # ── Read file: support both CSV and Excel ──────────────────────────────────
     try:
-        buf = io.BytesIO(file.read())
+        raw_bytes = file.read()
+        buf = io.BytesIO(raw_bytes)
         fname = file.filename.lower()
         if fname.endswith('.csv'):
-            df = pd.read_csv(buf)
+            # Count real data rows by scanning for first blank Fund Name
+            # This avoids loading the 1M+ blank rows Excel exports to CSV
+            lines = raw_bytes.decode('utf-8', errors='replace').splitlines()
+            real_rows = 0
+            for line in lines[1:]:   # skip header
+                if line.split(',')[0].strip():
+                    real_rows += 1
+                else:
+                    break
+            df = pd.read_csv(buf, dtype=str, nrows=max(real_rows, 1))
         else:
-            df = pd.read_excel(buf, engine='openpyxl')
+            df = pd.read_excel(buf, engine='openpyxl', dtype=str).dropna(how='all')
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df[df.iloc[:, 0].astype(str).str.strip().ne('') &
+                df.iloc[:, 0].astype(str).str.strip().ne('nan')]
+        df = df.reset_index(drop=True)
     except Exception as read_err:
         return jsonify({'success': False, 'error': f'Could not read file: {str(read_err)}'}), 400
-    # Strip whitespace from all column names
-    df.columns = [str(c).strip() for c in df.columns]
     try:
         db = get_db()
         cat = db.execute("SELECT id FROM categories WHERE code=?", (category_code,)).fetchone()
