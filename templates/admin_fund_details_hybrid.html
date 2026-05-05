@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fund Details - Hybrid — Daksham Capital Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/dashboard.css">
+<style>
+.admin-wrap{max-width:100%;margin:0;padding:0}
+.admin-nav{display:flex;gap:8px;padding:12px 20px;flex-wrap:wrap}
+.admin-nav a{padding:7px 16px;border-radius:7px;font-size:12px;font-weight:500;text-decoration:none;border:1px solid #e2e8f0;color:#64748b;transition:all .15s;font-family:'Outfit',sans-serif}
+.admin-nav a:hover{background:#f1f5f9;color:#374151}
+.admin-nav a.active{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe;font-weight:600}
+.fd-wrap{display:flex;flex-direction:column;height:calc(100vh - 130px);overflow:hidden}
+.fd-controls{padding:10px 20px;background:#fff;border-bottom:1px solid #e2e8f0;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;flex-shrink:0}
+.ctrl-group{display:flex;flex-direction:column;gap:3px}
+.ctrl-label{font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px}
+.ctrl-select{padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;font-family:'Outfit',sans-serif;background:#fff;outline:none}
+.fd-tbl-wrap{flex:1;overflow:auto}
+.fd-tbl-wrap::-webkit-scrollbar{width:4px;height:4px}
+.fd-tbl-wrap::-webkit-scrollbar-thumb{background:#d1d5db}
+.fdtbl{border-collapse:collapse;font-size:11px;white-space:nowrap}
+.fdtbl th{padding:6px 10px;background:#1e3a5f;color:#fff;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;position:sticky;top:0;z-index:10;text-align:right;border-right:1px solid #2d5f8a}
+.fdtbl th:first-child{text-align:left;min-width:200px;position:sticky;left:0;z-index:20;background:#1e3a5f}
+.fdtbl td{padding:5px 10px;border-bottom:1px solid #f1f5f9;border-right:1px solid #f5f5f5;text-align:right;font-family:'DM Mono',monospace}
+.fdtbl td:first-child{text-align:left;font-family:'Outfit',sans-serif;font-size:11px;font-weight:500;color:#374151;position:sticky;left:0;background:#fff;z-index:5;border-right:1px solid #e2e8f0}
+.fdtbl tr:hover td{background:#f8fafc}
+.fdtbl tr:hover td:first-child{background:#f0f4ff}
+</style>
+</head>
+<body style="overflow:hidden">
+<header class="header">
+  <div class="logo-wrap"><div class="logo">Daksham <span>Capital</span></div><div class="logo-sub">Fund Details - Hybrid</div></div>
+  <div class="header-right">
+    <a href="/" class="admin-link">← Dashboard</a>
+    <a href="/admin/logout" class="admin-link">Logout</a>
+  </div>
+</header>
+
+<div class="admin-nav">
+  <a href="/admin/funds">Fund Management</a>
+  <a href="/admin/nav_history">NAV History</a>
+  <a href="/admin/fund_details">Fund Details - Equity</a>
+  <a href="/admin/fund_details_hybrid" class="active">Fund Details - Hybrid</a>
+</div>
+
+<div class="fd-wrap">
+  <div class="fd-controls">
+    <div class="ctrl-group">
+      <label class="ctrl-label">Category</label>
+      <select class="ctrl-select" id="catSel" onchange="loadDetails()">
+        {% for cat in categories if cat.parent_group == 'hybrids' %}
+        <option value="{{ cat.code }}">{{ cat.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="ctrl-group">
+      <label class="ctrl-label">Quarter (blank = latest)</label>
+      <select class="ctrl-select" id="qtrSel" onchange="loadDetails()">
+        <option value="">Latest</option>
+      </select>
+    </div>
+    <button class="btn primary" onclick="loadDetails()" style="padding:5px 14px;font-size:11px">Apply</button>
+    <div style="font-size:10px;color:#64748b;align-self:center" id="fdStatus"></div>
+  </div>
+  <div class="fd-tbl-wrap" id="fdTblWrap">
+    <div style="padding:30px;color:#94a3b8;text-align:center">Loading hybrid fund details…</div>
+  </div>
+</div>
+
+<script>
+function loadDetails(){
+  const cat=document.getElementById('catSel').value;
+  const qtr=document.getElementById('qtrSel').value;
+  document.getElementById('fdTblWrap').innerHTML='<div style="padding:30px;color:#94a3b8;text-align:center">Loading…</div>';
+  
+  let url=`/api/fund_details_view?category=${cat}`;
+  if(qtr) url+=`&quarter=${qtr}`;
+  
+  fetch(url)
+    .then(r=>{if(!r.ok){return r.text().then(t=>{throw new Error('Server '+r.status+': '+t.substring(0,200));});}return r.json();})
+    .then(data=>{
+    if(data.error){document.getElementById('fdTblWrap').innerHTML=`<div style="padding:20px;color:#dc2626">${data.error}</div>`;return;}
+    
+    const qSel=document.getElementById('qtrSel');
+    const curQ=qSel.value;
+    qSel.innerHTML='<option value="">Latest</option>';
+    (data.quarters||[]).forEach(q=>{qSel.innerHTML+=`<option value="${q}"${q===curQ?' selected':''}>${q}</option>`;});
+    
+    const funds=data.funds;
+    if(!funds.length){document.getElementById('fdTblWrap').innerHTML='<div style="padding:20px;color:#94a3b8;text-align:center">No funds found.</div>';return;}
+    
+    const useHist=qtr&&data.hist_data&&Object.keys(data.hist_data).length>0;
+    
+    let th='<tr><th>Fund Name</th><th>Type</th><th>AUM</th><th>Exp Ratio</th><th>Manager 1</th><th>Manager 2</th><th>Beta</th><th>Std Dev</th><th>Info Ratio</th><th>Equity %</th><th>Net Eq %</th><th>Debt %</th><th>Others %</th><th>Gold %</th><th>Silver %</th><th>REITs %</th><th>LC %</th><th>MC %</th><th>SC %</th><th>Cash %</th></tr>';
+    let tb='';
+    
+    funds.forEach(f=>{
+      let d=f;
+      if(useHist&&data.hist_data[f.id]){
+        const h=data.hist_data[f.id];
+        d={...f, aum_latest:h.aum, lc_pct:h.lc_pct, mc_pct:h.mc_pct, sc_pct:h.sc_pct,
+           equity_pct:h.equity_pct, net_equity_pct:h.net_equity_pct, debt_pct:h.debt_pct,
+           others_pct:h.others_pct, gold_pct:h.gold_pct, silver_pct:h.silver_pct, reits_pct:h.reits_pct};
+      }
+      
+      const fmt=v=>v!=null&&v!=undefined?parseFloat(v).toFixed(2):'—';
+      const fmtPct=v=>v!=null&&v!=undefined?parseFloat(v).toFixed(2)+'%':'—';
+      const fmtStr=v=>v||'—';
+      const typBadge=f.type==='benchmark'?'<span style="color:#92400e;font-weight:600">BM</span>':f.type==='strategy'?'<span style="color:#5b21b6;font-weight:600">SI</span>':'Fund';
+      
+      tb+=`<tr>
+        <td>${f.name}</td>
+        <td style="text-align:center">${typBadge}</td>
+        <td>${d.aum_latest?Math.round(d.aum_latest).toLocaleString():'—'}</td>
+        <td>${fmt(d.expense_ratio)}</td>
+        <td style="font-family:'Outfit',sans-serif">${fmtStr(d.manager1)}</td>
+        <td style="font-family:'Outfit',sans-serif">${fmtStr(d.manager2)}</td>
+        <td>${fmt(d.beta)}</td>
+        <td>${fmt(d.std_dev)}</td>
+        <td>${fmt(d.info_ratio)}</td>
+        <td style="color:#2563eb;font-weight:600">${fmtPct(d.equity_pct)}</td>
+        <td style="color:#059669">${fmtPct(d.net_equity_pct)}</td>
+        <td style="color:#059669">${fmtPct(d.debt_pct)}</td>
+        <td style="color:#d97706;font-weight:600">${fmtPct(d.others_pct)}</td>
+        <td style="color:#b45309">${fmtPct(d.gold_pct)}</td>
+        <td style="color:#64748b">${fmtPct(d.silver_pct)}</td>
+        <td style="color:#7c3aed">${fmtPct(d.reits_pct)}</td>
+        <td>${fmtPct(d.lc_pct)}</td>
+        <td>${fmtPct(d.mc_pct)}</td>
+        <td>${fmtPct(d.sc_pct)}</td>
+        <td>${d.cash_pct!=null?fmtPct(d.cash_pct):'—'}</td>
+      </tr>`;
+    });
+    
+    document.getElementById('fdTblWrap').innerHTML=`<table class="fdtbl"><thead>${th}</thead><tbody>${tb}</tbody></table>`;
+    document.getElementById('fdStatus').textContent=`${funds.length} funds · ${useHist?'Showing Q: '+qtr:'Latest data'}`;
+  }).catch(e=>{
+    document.getElementById('fdTblWrap').innerHTML=`<div style="padding:20px;color:#dc2626">Error: ${e.message}</div>`;
+  });
+}
+
+loadDetails();
+</script>
+</body>
+</html>

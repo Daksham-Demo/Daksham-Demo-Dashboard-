@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Admin — Daksham Capital</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@400;500;600&family=DM+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/dashboard.css">
+<style>
+  .admin-wrap { max-width:1100px; margin:20px auto; padding:0 20px; }
+  .admin-nav { display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap; }
+  .admin-nav a {
+    padding: 7px 16px; border-radius: 7px; font-size: 12px; font-weight: 500;
+    text-decoration: none; border: 1px solid #e2e8f0; color: #64748b;
+    transition: all .15s; font-family: 'Outfit', sans-serif;
+  }
+  .admin-nav a:hover { background: #f1f5f9; color: #374151; }
+  .admin-nav a.active { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; font-weight: 600; }
+  .section-title { font-size: 14px; font-weight: 600; color: #0f172a; margin-bottom: 12px; }
+  .fund-table { width:100%; border-collapse:collapse; font-size:12px; }
+  .fund-table th {
+    padding: 8px 12px; text-align: left; border-bottom: 2px solid #e2e8f0;
+    font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .5px;
+    background: #fafbfc; font-weight: 700;
+  }
+  .fund-table td { padding: 7px 12px; border-bottom: 1px solid #f1f5f9; }
+  .fund-table tr:hover td { background: #f8fafc; }
+  .fund-table .inactive { opacity: .4; }
+  .type-badge {
+    font-size: 9px; padding: 2px 7px; border-radius: 3px; font-weight: 700;
+    display: inline-block;
+  }
+  .type-badge.benchmark { background: #fef3c7; color: #92400e; }
+  .type-badge.strategy  { background: #ede9fe; color: #5b21b6; }
+  .type-badge.fund      { background: #dbeafe; color: #1d4ed8; }
+  .actions-cell { display: flex; gap: 4px; }
+  .actions-cell form { display: inline; }
+  .cat-filter { margin-bottom: 12px; }
+  .cat-filter select {
+    padding: 6px 12px; border: 1px solid #e2e8f0; border-radius: 6px;
+    font-size: 12px; font-family: 'Outfit', sans-serif; background: #fff;
+  }
+</style>
+</head>
+<body style="overflow:auto;height:auto">
+<header class="header">
+  <div class="logo-wrap">
+    <div class="logo">Daksham <span>Capital</span></div>
+    <div class="logo-sub">Admin Panel</div>
+  </div>
+  <div class="header-right">
+    <a href="/" class="admin-link">← Dashboard</a>
+    <a href="/admin/logout" class="admin-link">Logout</a>
+  </div>
+</header>
+
+<div class="admin-wrap">
+  <!-- ADMIN NAV -->
+  <div class="admin-nav">
+    <a href="/admin/funds" class="active">Fund Management</a>
+    <a href="/admin/nav_history">NAV History</a>
+    <a href="/admin/fund_details">Fund Details - Equity</a>
+    <a href="/admin/fund_details_hybrid">Fund Details - Hybrid</a>
+  </div>
+
+  {% for msg in get_flashed_messages() %}
+  <div class="upload-status ok" style="display:block;margin-bottom:14px">{{ msg }}</div>
+  {% endfor %}
+
+  <!-- DATA MANAGEMENT -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">Data Management — Delete by Category</div>
+    <div class="card-b">
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+        <div class="upload-field" style="min-width:180px;margin-bottom:0">
+          <label class="upload-label">Select Category</label>
+          <select id="mgmtCatSelect" class="upload-select">
+            {% for cat in categories %}
+            <option value="{{ cat.id }}">{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <form method="POST" style="display:inline">
+          <button type="submit" class="btn" style="border-color:#fde68a;color:#92400e;background:#fffbeb"
+            onclick="this.form.action='/admin/category/delete_navs/'+document.getElementById('mgmtCatSelect').value; return confirm('Delete all NAV history and returns for this category? Fund names and details will be preserved.')">
+            Delete NAV History
+          </button>
+        </form>
+        <form method="POST" style="display:inline">
+          <button type="submit" class="btn" style="border-color:#fde68a;color:#92400e;background:#fffbeb"
+            onclick="this.form.action='/admin/category/delete_details/'+document.getElementById('mgmtCatSelect').value; return confirm('Delete all fund details for this category? NAV history will be preserved.')">
+            Delete Fund Details
+          </button>
+        </form>
+        <form method="POST" style="display:inline">
+          <button type="submit" class="btn danger"
+            onclick="this.form.action='/admin/category/reset/'+document.getElementById('mgmtCatSelect').value; return confirm('⚠ This will permanently delete EVERYTHING for this category — all funds, NAVs, returns, and details. Are you sure?')">
+            Delete Everything
+          </button>
+        </form>
+      </div>
+      <div class="format-note" style="margin-top:10px">
+        <strong>Delete NAV History</strong> — removes NAVs and calculated returns, keeps fund names and details<br>
+        <strong>Delete Fund Details</strong> — removes fund details and quarterly history, keeps NAVs<br>
+        <strong>Delete Everything</strong> — full reset, category becomes empty
+      </div>
+    </div>
+  </div>
+
+  <!-- ADD FUND -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">Add New Fund / Index</div>
+    <div class="card-b">
+      <form method="POST" action="/admin/funds/add"
+            style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div class="upload-field" style="flex:2;min-width:220px;margin-bottom:0">
+          <label class="upload-label">Full Name (as in NAV files)</label>
+          <input type="text" name="name" class="upload-input"
+                 placeholder="e.g. ICICI Pru Midcap Fund-Reg(G)" required>
+        </div>
+        <div class="upload-field" style="flex:1;min-width:130px;margin-bottom:0">
+          <label class="upload-label">Category</label>
+          <select name="category_id" class="upload-select">
+            {% for cat in categories %}
+            <option value="{{ cat.id }}">{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="upload-field" style="flex:1;min-width:110px;margin-bottom:0">
+          <label class="upload-label">Type</label>
+          <select name="type" class="upload-select">
+            <option value="fund">Fund</option>
+            <option value="benchmark">Benchmark</option>
+            <option value="strategy">Strategy Index</option>
+          </select>
+        </div>
+        <div class="upload-field" style="flex:1;min-width:130px;margin-bottom:0">
+          <label class="upload-label">Inception Date</label>
+          <input type="date" name="inception_date" class="upload-input">
+        </div>
+        <button type="submit" class="btn primary" style="align-self:flex-end">Add</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- EQUITY FUND DETAILS -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">Update Equity Fund Details (Quarterly)</div>
+    <div class="card-b">
+      <div class="format-note" style="margin-bottom:10px">
+        Upload Excel (.xlsx) or CSV (.csv) with exact column headers: Fund Name, AUM, Expense Ratio, Manager 1, Manager 2,
+        Beta, Std Dev, Info Ratio, Sector 1, Sector 1 %, Sector 2, Sector 2 %, Sector 3, Sector 3 %,
+        LC %, MC %, SC %, Cash %.
+        Top 3 Sector % is auto-calculated. Quarter is free-text — e.g. "Q1 FY26" or "Q4 CY25".
+      </div>
+      <table class="fmt-tbl" style="margin-bottom:10px;font-size:9px">
+        <tr>
+          <th>Fund Name</th><th>AUM</th><th>Expense Ratio</th><th>Manager 1</th><th>Manager 2</th>
+          <th>Beta</th><th>Std Dev</th><th>Info Ratio</th><th>Sector 1</th><th>Sector 1 %</th>
+          <th>Sector 2</th><th>Sector 2 %</th><th>Sector 3</th><th>Sector 3 %</th>
+          <th>LC %</th><th>MC %</th><th>SC %</th><th>Cash %</th>
+        </tr>
+        <tr>
+          <td>ICICI Pru Large Cap</td><td>77451</td><td>1.40</td><td>Sankaran Naren</td><td>Vaibhav Dusad</td>
+          <td>0.90</td><td>14.2</td><td>0.12</td><td>Banking</td><td>25.3</td>
+          <td>IT</td><td>18.1</td><td>Pharma</td><td>12.5</td>
+          <td>0.85</td><td>0.07</td><td>0.01</td><td>0.03</td>
+        </tr>
+      </table>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div class="upload-field" style="min-width:120px;margin-bottom:0">
+          <label class="upload-label">Category</label>
+          <select id="detailsCat" class="upload-select">
+            {% for cat in categories if cat.parent_group == 'equity' or cat.parent_group == 'non_mf' %}
+            <option value="{{ cat.code }}">{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="upload-field" style="min-width:100px;margin-bottom:0">
+          <label class="upload-label">Quarter (optional)</label>
+          <input type="text" id="detailsQtr" class="upload-input" placeholder="e.g. Q4 2025">
+        </div>
+        <div class="upload-field" style="flex:1;min-width:180px;margin-bottom:0">
+          <label class="upload-label">Excel / CSV File</label>
+          <input type="file" id="detailsFile" class="upload-input" accept=".xlsx,.xls,.csv">
+        </div>
+        <div class="upload-field" style="min-width:140px;margin-bottom:0">
+          <label class="upload-label">Password</label>
+          <input type="password" id="detailsPwd" class="upload-input" placeholder="Admin password">
+        </div>
+        <button class="btn primary" onclick="uploadDetails()" style="align-self:flex-end">Update</button>
+      </div>
+      <div id="detailsStatus" class="upload-status" style="display:none;margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- HYBRID FUND DETAILS -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">Update Hybrid Fund Details (Quarterly)</div>
+    <div class="card-b">
+      <div class="format-note" style="margin-bottom:10px">
+        Upload Excel (.xlsx) or CSV (.csv) with exact column headers: Fund Name, AUM, Exp Ratio, Manager 1, Manager 2,
+        Beta, Std Dev, Info Ratio, Equity %, Net Equity %, Debt %, Others %, Gold %, Silver %, REITs %,
+        LC %, MC %, SC %, Cash %.
+        Quarter is free-text — e.g. "Q1 FY26" or "Q4 CY25".
+      </div>
+      <table class="fmt-tbl" style="margin-bottom:10px;font-size:9px">
+        <tr>
+          <th>Fund Name</th><th>AUM</th><th>Exp Ratio</th><th>Manager 1</th><th>Manager 2</th>
+          <th>Beta</th><th>Std Dev</th><th>Info Ratio</th><th>Equity %</th><th>Net Equity %</th>
+          <th>Debt %</th><th>Others %</th><th>Gold %</th><th>Silver %</th><th>REITs %</th>
+          <th>LC %</th><th>MC %</th><th>SC %</th><th>Cash %</th>
+        </tr>
+        <tr>
+          <td>HDFC Balanced Adv</td><td>95000</td><td>1.35</td><td>Fund Mgr</td><td>—</td>
+          <td>0.85</td><td>11.5</td><td>0.15</td><td>65.2</td><td>58.1</td>
+          <td>25.3</td><td>9.5</td><td>3.2</td><td>1.1</td><td>0.8</td>
+          <td>72.1</td><td>18.3</td><td>9.6</td><td>4.2</td>
+        </tr>
+      </table>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div class="upload-field" style="min-width:120px;margin-bottom:0">
+          <label class="upload-label">Category</label>
+          <select id="hybridDetailsCat" class="upload-select">
+            {% for cat in categories if cat.parent_group == 'hybrids' %}
+            <option value="{{ cat.code }}">{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="upload-field" style="min-width:100px;margin-bottom:0">
+          <label class="upload-label">Quarter (optional)</label>
+          <input type="text" id="hybridDetailsQtr" class="upload-input" placeholder="e.g. Q4 2025">
+        </div>
+        <div class="upload-field" style="flex:1;min-width:180px;margin-bottom:0">
+          <label class="upload-label">Excel / CSV File</label>
+          <input type="file" id="hybridDetailsFile" class="upload-input" accept=".xlsx,.xls,.csv">
+        </div>
+        <div class="upload-field" style="min-width:140px;margin-bottom:0">
+          <label class="upload-label">Password</label>
+          <input type="password" id="hybridDetailsPwd" class="upload-input" placeholder="Admin password">
+        </div>
+        <button class="btn primary" onclick="uploadHybridDetails()" style="align-self:flex-end">Update</button>
+      </div>
+      <div id="hybridDetailsStatus" class="upload-status" style="display:none;margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- FUND LIST -->
+  <div class="card">
+    <div class="card-h">All Funds & Indices ({{ funds|length }})</div>
+    <div class="card-b" style="padding:0">
+      <div class="cat-filter" style="padding:12px 12px 0">
+        <select id="adminCatFilter" onchange="filterAdminFunds()">
+          <option value="">All Categories</option>
+          {% for cat in categories %}
+          <option value="{{ cat.name }}">{{ cat.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="fund-table" id="adminFundTable">
+          <thead>
+            <tr>
+              <th>Fund Name</th>
+              <th>Category</th>
+              <th style="text-align:center">Type</th>
+              <th>Inception</th>
+              <th style="text-align:center">Rolling</th>
+              <th style="text-align:center">Status</th>
+              <th style="text-align:center">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in funds %}
+            <tr class="{% if not f.is_active %}inactive{% endif %}" data-category="{{ f.category_name }}">
+              <td style="font-family:'DM Mono',monospace;font-size:11px">{{ f.name }}</td>
+              <td style="color:#64748b">{{ f.category_name }}</td>
+              <td style="text-align:center">
+                <span class="type-badge {{ f.type }}">{{ f.type|upper }}</span>
+              </td>
+              <td style="font-family:'DM Mono',monospace;font-size:11px;color:#64748b">{{ f.inception_date or '—' }}</td>
+              <td style="text-align:center">
+                {% if f.qualifies_rolling %}<span style="color:#15803d">✓</span>
+                {% else %}<span style="color:#cbd5e1">—</span>{% endif %}
+              </td>
+              <td style="text-align:center">
+                <span style="font-size:10px;font-weight:600;color:{% if f.is_active %}#15803d{% else %}#dc2626{% endif %}">
+                  {% if f.is_active %}Active{% else %}Inactive{% endif %}
+                </span>
+              </td>
+              <td style="text-align:center">
+                <div class="actions-cell" style="justify-content:center">
+                  <form method="POST" action="/admin/funds/toggle/{{ f.id }}">
+                    <button type="submit" class="btn-sm"
+                      onclick="return confirm('{% if f.is_active %}Deactivate{% else %}Activate{% endif %} this fund?')">
+                      {% if f.is_active %}Deactivate{% else %}Activate{% endif %}
+                    </button>
+                  </form>
+                  {% if f.is_active %}
+                  <form method="POST" action="/admin/funds/delete/{{ f.id }}">
+                    <button type="submit" class="btn-sm" style="color:#dc2626;border-color:#fecaca"
+                      onclick="return confirm('Delete {{ f.name }}? NAV data will be archived but the fund will be removed from all views.')">
+                      Delete
+                    </button>
+                  </form>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function uploadDetails() {
+  const file = document.getElementById('detailsFile').files[0];
+  const pwd  = document.getElementById('detailsPwd').value;
+  const cat  = document.getElementById('detailsCat').value;
+  const qtr  = document.getElementById('detailsQtr').value;
+  const st   = document.getElementById('detailsStatus');
+  if (!file) { st.className='upload-status err'; st.innerHTML='Select a file.'; st.style.display='block'; return; }
+  if (!pwd)  { st.className='upload-status err'; st.innerHTML='Enter password.'; st.style.display='block'; return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('password', pwd);
+  fd.append('category', cat);
+  if (qtr) fd.append('quarter', qtr);
+  st.className='upload-status warn'; st.innerHTML='Updating fund details…'; st.style.display='block';
+  fetch('/api/update_fund_details',{method:'POST',body:fd})
+    .then(r=>{
+      if(!r.ok){return r.text().then(t=>{throw new Error('Server '+r.status+': '+t.substring(0,300));});}
+      return r.json();
+    })
+    .then(d=>{
+      if(d.success){st.className='upload-status ok';st.innerHTML='✓ '+(d.message||'Updated successfully');}
+      else{st.className='upload-status err';st.innerHTML='✗ '+(d.error||'Unknown error — check server logs');}
+    }).catch(e=>{st.className='upload-status err';st.innerHTML='Error: '+(e.message||'Network or server error');});
+}
+
+function uploadHybridDetails() {
+  const file = document.getElementById('hybridDetailsFile').files[0];
+  const pwd  = document.getElementById('hybridDetailsPwd').value;
+  const cat  = document.getElementById('hybridDetailsCat').value;
+  const qtr  = document.getElementById('hybridDetailsQtr').value;
+  const st   = document.getElementById('hybridDetailsStatus');
+  if (!file) { st.className='upload-status err'; st.innerHTML='Select a file.'; st.style.display='block'; return; }
+  if (!pwd)  { st.className='upload-status err'; st.innerHTML='Enter password.'; st.style.display='block'; return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('password', pwd);
+  fd.append('category', cat);
+  if (qtr) fd.append('quarter', qtr);
+  st.className='upload-status warn'; st.innerHTML='Updating hybrid fund details…'; st.style.display='block';
+  fetch('/api/update_fund_details',{method:'POST',body:fd})
+    .then(r=>{
+      if(!r.ok){return r.text().then(t=>{throw new Error('Server '+r.status+': '+t.substring(0,300));});}
+      return r.json();
+    })
+    .then(d=>{
+      if(d.success){st.className='upload-status ok';st.innerHTML='✓ '+(d.message||'Updated successfully');}
+      else{st.className='upload-status err';st.innerHTML='✗ '+(d.error||'Unknown error — check server logs');}
+    }).catch(e=>{st.className='upload-status err';st.innerHTML='Error: '+(e.message||'Network or server error');});
+}
+
+function filterAdminFunds() {
+  const val = document.getElementById('adminCatFilter').value;
+  document.querySelectorAll('#adminFundTable tbody tr').forEach(tr => {
+    tr.style.display = (!val || tr.dataset.category === val) ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>

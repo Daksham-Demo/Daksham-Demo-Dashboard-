@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Daksham Capital — Fund Research</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+
+<!-- FIRST-TIME UPLOAD MODAL -->
+<div class="modal-overlay" id="firstUploadModal">
+  <div class="modal-panel">
+    <div class="modal-title">📊 Initial Setup — Upload NAV History</div>
+    <div class="modal-sub">
+      <strong>Use this once per category</strong> to upload the full historical NAV file.
+      The system will auto-detect fund names from column headers, create them, and ingest all month-end NAVs.
+      After this, use "Monthly Update" for ongoing NAV additions.
+    </div>
+    <div class="format-box">
+      <div class="format-box-title">Required file format (pivot layout):</div>
+      <table class="fmt-tbl">
+        <tr><th>Date</th><th>Fund Name 1</th><th>BM: Benchmark</th><th>SI: Strategy Index</th></tr>
+        <tr><td>30-11-2005</td><td>12.34</td><td>1000.50</td><td>800.20</td></tr>
+        <tr><td>31-12-2005</td><td>12.89</td><td>1025.30</td><td>815.40</td></tr>
+      </table>
+      <div class="format-note">
+        ✓ First column must be <strong>Date</strong> (month-end dates)<br>
+        ✓ Each fund/index as a separate column — header = fund name<br>
+        ✓ Prefix benchmarks with <strong>BM:</strong> and strategy indices with <strong>SI:</strong><br>
+        ✓ One file per category · Accepts .xlsx, .xls, .csv
+      </div>
+    </div>
+    <div class="upload-field">
+      <label class="upload-label">Category</label>
+      <select id="firstUploadCat" class="upload-select"></select>
+    </div>
+    <div class="upload-field">
+      <label class="upload-label">Password</label>
+      <div style="display:flex;gap:6px">
+        <input type="password" id="firstUploadPwd" class="upload-input" placeholder="Admin password" style="flex:1">
+        <button class="btn-sm" onclick="togglePwd('firstUploadPwd')">👁</button>
+      </div>
+    </div>
+    <div class="drop-zone" id="firstDropZone"
+      onclick="document.getElementById('firstFileInput').click()">
+      <input type="file" id="firstFileInput" accept=".xlsx,.xls,.csv"
+             onchange="handleFirstFile(this)">
+      <div class="drop-icon">📁</div>
+      <div class="drop-text"><strong>Click to browse</strong> or drag & drop</div>
+      <div class="drop-hint">Single Excel or CSV file</div>
+    </div>
+    <div id="firstFileName" style="margin-top:8px;font-size:11px;color:#64748b"></div>
+    <div class="upload-status" id="firstUploadStatus" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('firstUploadModal')">Cancel</button>
+      <button class="btn primary" id="firstUploadBtn" onclick="doFirstUpload()" disabled>Upload & Process</button>
+    </div>
+  </div>
+</div>
+
+<!-- UPDATE NAV MODAL -->
+<div class="modal-overlay" id="updateModal">
+  <div class="modal-panel">
+    <div class="modal-title">⬆ Monthly Update — Add New NAVs</div>
+    <div class="modal-sub">
+      <strong>Use this every month</strong> to add new month-end NAV data for existing funds.
+      Supports both pivot format (dates as rows, funds as columns) and long format (Name | NAV | Date).
+      Also works for uploading NAVs for newly added funds. Multiple files allowed.
+    </div>
+    <div class="upload-field">
+      <label class="upload-label">Category</label>
+      <select id="updateCat" class="upload-select"></select>
+    </div>
+    <div class="upload-field">
+      <label class="upload-label">Password</label>
+      <div style="display:flex;gap:6px">
+        <input type="password" id="updatePwd" class="upload-input" placeholder="Admin password" style="flex:1">
+        <button class="btn-sm" onclick="togglePwd('updatePwd')">👁</button>
+      </div>
+    </div>
+    <div class="drop-zone" id="updateDropZone"
+      onclick="document.getElementById('updateFileInput').click()"
+      ondragover="event.preventDefault();this.classList.add('drag')"
+      ondragleave="this.classList.remove('drag')"
+      ondrop="handleUpdateDrop(event)">
+      <input type="file" id="updateFileInput" accept=".xlsx,.xls,.csv" multiple
+             onchange="handleUpdateFiles(this)">
+      <div class="drop-icon">⬆</div>
+      <div class="drop-text"><strong>Click to browse</strong> or drag & drop</div>
+      <div class="drop-hint">Excel or CSV · Multiple files allowed</div>
+    </div>
+    <div id="updateFileList" style="margin-top:8px"></div>
+    <div class="upload-status" id="updateStatus" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('updateModal')">Go Back</button>
+      <button class="btn primary" id="updateBtn" onclick="doUpdate()" disabled>Apply Updates</button>
+    </div>
+  </div>
+</div>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="logo-wrap">
+    <div class="logo">Daksham <span>Capital</span></div>
+    <div class="logo-sub">Fund Research Portal</div>
+  </div>
+  <div class="header-right">
+    <div class="asof-control" id="asofControl" style="display:none">
+      <label class="asof-label">As on</label>
+      <input type="date" id="asOfInput" class="asof-input" min="2000-01-01" onchange="applyAsOf()">
+      <span id="asOfBadge" class="as-of-badge"></span>
+      <button id="resetAsOfBtn" class="reset-asof-btn" onclick="resetAsOf()" style="display:none">Reset to latest</button>
+    </div>
+    <button class="header-btn" onclick="openModal('firstUploadModal')" title="First-time: upload full NAV history file to create a new category">📊 Initial Setup</button>
+    <button class="header-btn" onclick="openModal('updateModal')" title="Monthly: upload new month-end NAVs for existing funds">⬆ Monthly Update</button>
+    <a href="/admin/login" class="admin-link">Admin</a>
+    <a href="/logout" class="admin-link">Logout</a>
+  </div>
+</header>
+
+<!-- UNIVERSE TABS -->
+<div class="universe-tabs">
+  <button class="uni-tab active" data-universe="mf" onclick="switchUniverse('mf', this)">Mutual Funds</button>
+  <button class="uni-tab" data-universe="nmf" onclick="switchUniverse('nmf', this)">Non MF</button>
+  <button class="uni-tab" data-universe="idx" onclick="switchUniverse('idx', this)">Indices</button>
+</div>
+
+<!-- CATEGORY NAV -->
+<div class="cat-nav" id="catNav">
+  <!-- Filled by JS -->
+</div>
+
+<!-- LEGEND -->
+<div class="legend-bar" id="legendBar" style="display:none">
+  <span class="legend-label">Return colour vs benchmark:</span>
+  <span class="legend-item"><span class="ldot green"></span>Fund ≥ BM + 10% of |BM|</span>
+  <span class="legend-item"><span class="ldot grey"></span>Within ±10% of BM</span>
+  <span class="legend-item"><span class="ldot red"></span>Fund ≤ BM − 10% of |BM|</span>
+  <span class="legend-item pri-note">Strategy Indices shown are Price Return Index (PRI)</span>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="main-wrap">
+  <!-- EMPTY STATE -->
+  <div id="emptyState" class="empty-state" style="display:none">
+    <div class="empty-icon">📊</div>
+    <div class="empty-title">No data uploaded yet</div>
+    <div class="empty-sub">Upload a NAV history file to populate this category.</div>
+    <button class="btn primary" onclick="openFirstUploadForCategory()">Upload NAV History</button>
+  </div>
+
+  <!-- DATA STATE -->
+  <div id="dataState" style="display:none">
+    <!-- TOPBAR -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="breadcrumb" id="breadcrumb">Large Cap › <strong>All Funds</strong></div>
+        <div class="search-container">
+          <input type="text" id="searchInput" placeholder="Search funds & indices…"
+                 oninput="filterSearch(this.value)" autocomplete="off">
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="view-toggle">
+          <button class="vbtn active" onclick="setView('trailing', this)">Trailing</button>
+          <button class="vbtn" onclick="setView('calendar', this)">Calendar Year</button>
+          <button class="vbtn" onclick="setView('rolling', this)">Rolling</button>
+          <button class="vbtn" onclick="setView('custom', this)">Custom Period</button>
+        </div>
+        <button class="download-btn" onclick="downloadExcel()">⬇ Excel</button>
+      </div>
+    </div>
+
+    <!-- TABLE PANEL -->
+    <div id="tablePanel" class="table-panel">
+      <div id="customPanel" style="display:none" class="custom-panel">
+        <div class="custom-inner">
+          <div class="custom-field">
+            <label>From</label>
+            <input type="date" id="fromDate" value="2020-01-01">
+          </div>
+          <div class="custom-field">
+            <label>To</label>
+            <input type="date" id="toDate">
+          </div>
+          <div class="custom-field" style="min-width:200px">
+            <label>Select Funds (optional)</label>
+            <select id="customFundSelect" multiple size="3" class="custom-fund-select">
+            </select>
+          </div>
+          <button class="btn primary" onclick="runCustom()">Calculate</button>
+        </div>
+        <div class="custom-note">Under 1 year → Absolute return · 1 year+ → Annualised CAGR · Hold Ctrl/Cmd to select multiple funds</div>
+      </div>
+
+      <!-- Rolling threshold control -->
+      <div id="rollingControl" style="display:none" class="rolling-control">
+        <label>Outperformance threshold:</label>
+        <select id="outperfThreshold" onchange="applyThreshold()">
+          <option value="0.5" selected>0.5%</option>
+          <option value="1.0">1.0%</option>
+          <option value="1.5">1.5%</option>
+          <option value="2.0">2.0%</option>
+        </select>
+      </div>
+
+      <div class="tbl-scroll">
+        <table id="mainTable">
+          <thead id="mainThead"></thead>
+          <tbody id="mainTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- DETAIL PANEL -->
+    <div id="detailPanel" class="detail-panel" style="display:none">
+      <button class="back-btn" onclick="showTable()">← Back to all funds</button>
+      <div id="detailContent"></div>
+    </div>
+  </div>
+</div>
+
+<footer class="footer">
+  Daksham Capital Research · NAV Source: ACE MF · Index Data: NSE · Risk Metrics: NGEN Markets
+</footer>
+
+<script src="/static/js/dashboard.js"></script>
+<script>
+  initDashboard("{{ category.code }}", "{{ as_of }}");
+</script>
+</body>
+</html>
