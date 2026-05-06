@@ -326,16 +326,39 @@ let _firstFile=null;
 function handleFirstFile(input){ if(input.files.length>0){_firstFile=input.files[0]; document.getElementById('firstFileName').innerHTML=`<div class="file-row"><span class="file-name">📄 ${_firstFile.name}</span><span class="file-size">${(_firstFile.size/1024).toFixed(0)} KB</span><button class="file-remove" onclick="removeFirstFile()">✕</button></div>`; document.getElementById('firstUploadBtn').disabled=false;} }
 function removeFirstFile(){_firstFile=null;document.getElementById('firstFileName').textContent='';document.getElementById('firstUploadBtn').disabled=true;document.getElementById('firstFileInput').value='';}
 function showStatus(elId,cls,msg){ const el=document.getElementById(elId); el.className='upload-status '+cls; el.innerHTML=msg; el.style.display='block'; }
+// Poll job status then redirect once recalc is done (max 3 min)
+function pollAndRedirect(jobId, cat, statusElId, dots, startTime){
+  if(!jobId){ window.location.href='/dashboard/'+cat; return; }
+  fetch('/api/job_status/'+jobId).then(r=>r.json()).then(j=>{
+    const elapsed=Math.round((Date.now()-startTime)/1000);
+    const d='.'.repeat((dots%4)+1);
+    if(j.status==='done'){
+      showStatus(statusElId,'ok','✓ Done! Returns calculated. Redirecting…');
+      setTimeout(()=>window.location.href='/dashboard/'+cat, 800);
+    } else if(j.status==='error'){
+      showStatus(statusElId,'err','⚠ NAVs saved but returns failed: '+j.message+'. Redirecting…');
+      setTimeout(()=>window.location.href='/dashboard/'+cat, 2000);
+    } else if(elapsed>180){
+      showStatus(statusElId,'ok','✓ NAVs saved. Redirecting (returns still calculating)…');
+      setTimeout(()=>window.location.href='/dashboard/'+cat, 1000);
+    } else {
+      showStatus(statusElId,'warn',`⏳ Calculating returns${d} (${elapsed}s)`);
+      setTimeout(()=>pollAndRedirect(jobId,cat,statusElId,dots+1,startTime), 2000);
+    }
+  }).catch(()=>{ setTimeout(()=>window.location.href='/dashboard/'+cat, 1000); });
+}
+
 function doFirstUpload(){
-  if(!_firstFile)return; const pwd=document.getElementById('firstUploadPwd').value, cat=document.getElementById('firstUploadCat').value;
+  if(!_firstFile)return;
+  const pwd=document.getElementById('firstUploadPwd').value, cat=document.getElementById('firstUploadCat').value;
   if(!pwd){showStatus('firstUploadStatus','err','Enter password.');return;}
   const fd=new FormData(); fd.append('file',_firstFile); fd.append('password',pwd); fd.append('category',cat);
-  showStatus('firstUploadStatus','warn','⏳ Processing… This may take 1–3 minutes.'); document.getElementById('firstUploadBtn').disabled=true;
+  showStatus('firstUploadStatus','warn','⏳ Uploading file…'); document.getElementById('firstUploadBtn').disabled=true;
   fetch('/api/upload_navs',{method:'POST',body:fd}).then(r=>r.json()).then(data=>{
-    if(data.success){ let msg=`✓ ${data.message}`;
-      if(data.created_funds.length) msg+=`<br><strong>Created:</strong> ${data.created_funds.join(', ')}`;
-      if(data.fund_nav_counts){ msg+='<br><br><strong>NAV counts per fund:</strong><br>'; for(const[n,c] of Object.entries(data.fund_nav_counts)) msg+=`${n}: ${c}<br>`; }
-      showStatus('firstUploadStatus','ok',msg); setTimeout(()=>window.location.href='/dashboard/'+cat, 2000);
+    if(data.success){
+      let msg=`✓ ${data.total_navs} NAVs stored for ${data.created_funds?data.created_funds.length:0} funds.`;
+      showStatus('firstUploadStatus','warn', msg+' Calculating returns…');
+      pollAndRedirect(data.recalc_job, cat, 'firstUploadStatus', 0, Date.now());
     } else { showStatus('firstUploadStatus','err','✗ '+data.error); document.getElementById('firstUploadBtn').disabled=false; }
   }).catch(e=>{showStatus('firstUploadStatus','err','Error: '+e.message);document.getElementById('firstUploadBtn').disabled=false;});
 }
@@ -347,14 +370,18 @@ function addUpdateFiles(nf){nf.forEach(f=>{const e=f.name.toLowerCase();if(e.end
 function removeUpdateFile(i){_updateFiles.splice(i,1);renderUpdateFileList();document.getElementById('updateBtn').disabled=_updateFiles.length===0;}
 function renderUpdateFileList(){const el=document.getElementById('updateFileList');if(!_updateFiles.length){el.innerHTML='<div style="color:#94a3b8;font-size:11px">No files selected</div>';return;}el.innerHTML=_updateFiles.map((f,i)=>`<div class="file-row"><span class="file-name">📄 ${f.name}</span><span class="file-size">${(f.size/1024).toFixed(0)} KB</span><button class="file-remove" onclick="removeUpdateFile(${i})">✕</button></div>`).join('');}
 function doUpdate(){
-  if(!_updateFiles.length)return; const pwd=document.getElementById('updatePwd').value,cat=document.getElementById('updateCat').value;
+  if(!_updateFiles.length)return;
+  const pwd=document.getElementById('updatePwd').value, cat=document.getElementById('updateCat').value;
   if(!pwd){showStatus('updateStatus','err','Enter password.');return;}
   const fd=new FormData(); _updateFiles.forEach(f=>fd.append('files',f)); fd.append('password',pwd); fd.append('category',cat);
-  showStatus('updateStatus','warn',`⏳ Processing ${_updateFiles.length} file(s)…`); document.getElementById('updateBtn').disabled=true;
+  showStatus('updateStatus','warn',`⏳ Uploading ${_updateFiles.length} file(s)…`); document.getElementById('updateBtn').disabled=true;
   fetch('/api/upload_update',{method:'POST',body:fd}).then(r=>r.json()).then(data=>{
-    if(data.success){ let msg=`✓ ${data.message}`; if(data.files&&data.files.length){msg+='<br>';data.files.forEach(f=>{msg+=`• ${f.filename} — Matched: <strong>${f.matched}</strong>`;if(f.nav_date)msg+=` · Date: ${f.nav_date}`;msg+='<br>';});}
-      if(data.parse_errors&&data.parse_errors.length)msg+=`<br>⚠ ${data.parse_errors.join('; ')}`;
-      showStatus('updateStatus','ok',msg); setTimeout(()=>window.location.href='/dashboard/'+cat, 2000);
+    if(data.success){
+      let msg=`✓ ${data.total_navs} NAVs stored.`;
+      if(data.files&&data.files.length){ data.files.forEach(f=>{msg+=` ${f.filename}: ${f.matched} matched.`;}); }
+      if(data.parse_errors&&data.parse_errors.length) msg+=` ⚠ ${data.parse_errors.join('; ')}`;
+      showStatus('updateStatus','warn', msg+' Calculating returns…');
+      pollAndRedirect(data.recalc_job, cat, 'updateStatus', 0, Date.now());
     } else {showStatus('updateStatus','err','✗ '+data.error);document.getElementById('updateBtn').disabled=false;}
   }).catch(e=>{showStatus('updateStatus','err','Error: '+e.message);document.getElementById('updateBtn').disabled=false;});
 }
